@@ -17,6 +17,7 @@
 #include <sys/types.h>
 #include <time.h>
 #include <unistd.h>
+#include <libgen.h>
 #if defined(LEVELDB_PLATFORM_ANDROID)
 #include <sys/stat.h>
 #endif
@@ -430,13 +431,35 @@ class PosixEnv : public Env {
 
   virtual Status NewWritableFile(const std::string& fname,
                                  WritableFile** result) {
+    static pthread_mutex_t dirl = PTHREAD_MUTEX_INITIALIZER;
     Status s;
     const int fd = open(fname.c_str(), O_CREAT | O_RDWR | O_TRUNC, 0644);
     if (fd < 0) {
       *result = NULL;
       s = IOError(fname, errno);
     } else {
-      *result = new PosixMmapFile(fname, fd, page_size_);
+      // Ensure file existence is stored in parent dirent
+      char *f = strdup(fname.c_str());
+      // Note dirname(3) might be not thread-safe. That sucks quite a bit. Who
+      // designs these APIs?
+      // Note this only uses a local mutex. If other code would use dirname(3),
+      // this should become something more global. Jay!
+      PthreadCall("lock", pthread_mutex_lock(&dirl));
+      char *d = dirname(f);
+      const int dir = open(d, O_DIRECTORY | O_RDONLY);
+      PthreadCall("unlock", pthread_mutex_unlock(&dirl));
+      free(f);
+      // TODO Assume fsync is safe. It might not be, but that's another story.
+      const int res = fsync(dir);
+      close(dir);
+      if (res < 0) {
+        *result = NULL;
+        // TODO This should be the dirname, but I'm not well-versed in C++ to
+        // know how to safely allocate these things.
+        s = IOError(fname, errno);
+      } else {
+        *result = new PosixMmapFile(fname, fd, page_size_);
+      }
     }
     return s;
   }
