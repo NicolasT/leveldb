@@ -231,7 +231,7 @@ class PosixMmapFile : public WritableFile {
 
   bool MapNewRegion() {
     assert(base_ == NULL);
-    if (ftruncate(fd_, file_offset_ + map_size_) < 0) {
+    if (posix_fallocate64(fd_, file_offset_, map_size_) < 0) {
       return false;
     }
     void* ptr = mmap(NULL, map_size_, PROT_READ | PROT_WRITE, MAP_SHARED,
